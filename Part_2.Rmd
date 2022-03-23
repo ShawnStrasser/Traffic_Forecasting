@@ -1,0 +1,53 @@
+---
+title: "Final Project Part 2"
+team: "Sreeti Ravi, Shawn Strasser"
+date: "3/26/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(fpp3)
+library(imputeTS)
+library(arrow)
+```
+
+
+Here is what the dataset looks like.
+
+```{r}
+dataset <- read_parquet("volumes_traveltime.parquet") %>%
+  filter(Phase %in% c(2,6)) %>%
+  as_tsibble(index = TimeStamp, key = c("TSSU", "Phase"))
+dataset
+```
+
+There are anomalies which sometimes occur during daylight savings time changes due to an unresolved software bug. Those datapoints can be removed.
+
+```{r}
+dataset %>%
+  filter(TSSU == "03021", Phase == 2) %>%
+  autoplot(Volume)
+```
+
+Time Series Decomposition Example
+
+```{r, fig.height=8, fig.width=8}
+dataset %>%
+  filter(TSSU == "03021", Phase == 2) %>%
+  filter(Volume < 250) %>%
+  #filter_index("2021") %>%
+  select(Volume) %>%
+  fill_gaps() %>%
+  na_locf() %>%
+  group_by_key() %>%
+  index_by(Hourly_TimeStamp = ~ floor_date(., unit="1 hour")) %>%
+  summarise(`Hourly Volume (Vehicles Per Hour)` = sum(Volume)) %>%
+  model(STL(`Hourly Volume (Vehicles Per Hour)`, robust = TRUE)) %>% #~ season(period = 96) + season(period = 96 * 7)
+  components() %>%
+  filter_index("2022-01") %>%
+  autoplot()
+
+```
+```{r}
+```
