@@ -1,6 +1,6 @@
 ---
 title: "Final Project Part 2"
-team: "Sreeti Ravi, Shawn Strasser"
+author: "Sreeti Ravi, Shawn Strasser"
 date: "3/26/2022"
 output: pdf_document
 ---
@@ -13,12 +13,16 @@ library(arrow)
 ```
 
 
-Here is what the dataset looks like.
+Here is what the dataset looks like:
 
 ```{r}
-dataset <- read_parquet("volumes_traveltime.parquet") %>%
+# Set the system timezone to UTC
+Sys.setenv(TZ = "UTC")
+#Import Data
+dataset <- read_parquet("volumes_traveltime.parquet") %>% 
   filter(Phase %in% c(2,6)) %>%
   as_tsibble(index = TimeStamp, key = c("TSSU", "Phase"))
+
 dataset
 ```
 
