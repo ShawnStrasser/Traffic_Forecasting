@@ -106,6 +106,23 @@ decomp_volume %>%
 ```
 
 \pagebreak
+ACF plots reveal strong and persistent autocorrelation over days and weeks
+
+```{r fig.width=8}
+
+dataset %>%
+  fill_gaps() %>%
+  ACF(Volume, lag_max = 96) %>%
+  autoplot() + labs(title = "ACF of Volumes for 1 day (96 15-minute periods)")
+
+dataset %>%
+  fill_gaps() %>%
+  PACF(Volume, lag_max = 96) %>%
+  autoplot() + labs(title = "PACF of Volumes for 1 day (96 15-minute periods)")
+```
+
+
+\pagebreak
 # 3. Description of Time Series
 
 This plot gives an overview of how traffic volumes change seasonally at a particular location in Salem, OR. 
@@ -127,7 +144,29 @@ There is strong seasonality at the levels of day, week, and year. There tends to
 This time series is not stationary and will require some differencing to become stationary.
 
 \pagebreak
-# 4. Transformations
+# 4. Model -- apply several models (transformations if needed), explain decisions
+
+```{r fig.height=8, fig.width=8}
+
+transform <- dataset %>%
+  transmute(
+    Volume = Volume,
+    Diff_1 = difference(Volume, 1),
+    Diff_day = difference(Volume, 4*24),
+    Diff_week = difference(Volume, 4*24*7),
+    Diff_day_week = difference(difference(Volume, 4*24), 4*24*7),
+    Diff_day_1 = difference(difference(Volume, 4*24), 1),
+    Diff_week_1 = difference(difference(Volume, 4*24*7), 1),
+    Diff_day_week_1 = difference(difference(difference(Volume, 1), 4*24), 4*24*7)
+  )
+
+transform %>% 
+  filter_index("2022-01") %>%
+  pivot_longer(cols=c(Volume, Diff_1, Diff_day, Diff_week, Diff_day_week, Diff_day_1, Diff_week_1, Diff_day_week_1), names_to = "key", values_to = "value") %>%
+  autoplot(.vars = value) +
+  facet_grid(vars(key), scales = "free_y")
+  
+```
 
 
 
