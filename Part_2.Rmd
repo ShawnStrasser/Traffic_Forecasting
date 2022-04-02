@@ -1,57 +1,135 @@
 ---
-title: "Final Project Part 2"
+title: "Final Project Part 2: Predicting Automobile Traffic"
 author: "Sreeti Ravi, Shawn Strasser"
 date: "3/26/2022"
 output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(
+	echo = FALSE,
+	message = FALSE,
+	warning = FALSE
+)
 library(fpp3)
 library(imputeTS)
 library(arrow)
 ```
+```{r dataset}
 
-
-Here is what the dataset looks like:
-
-```{r}
 # Set the system timezone to UTC
 Sys.setenv(TZ = "UTC")
 #Import Data
 dataset <- read_parquet("volumes_traveltime.parquet") %>% 
-  filter(Phase %in% c(2,6)) %>%
-  as_tsibble(index = TimeStamp, key = c("TSSU", "Phase"))
-
-dataset
+  filter(TSSU == "03008", Phase == 2) %>% #filter to 1 for now to make this faster
+  #select(-Travel_Time) %>%
+  as_tsibble(index = TimeStamp, key = c("TSSU", "Phase")) %>%
+  #filter DST time change periods due to erratic events 
+  filter_index(~ "2019-11-03 00:45:00",
+               "2019-11-03 01:45:00" ~ "2020-11-01 00:45:00",
+               "2020-11-01 01:45:00" ~ "2021-11-07 00:45:00", 
+               "2021-11-07 01:45:00" ~.) %>%
+  group_by_key() %>% #without grouping the moving avg .complete=TRUE dosen't work all the time
+  mutate("1-day Moving Average Volume" = slider::slide_dbl(Volume, mean, .before=48, .after = 47, .complete = TRUE)) %>%
+  mutate("7-day Moving Average Volume" = slider::slide_dbl(Volume, mean, .before=336, .after = 335, .complete = TRUE)) %>%
+  mutate("1-day Moving Average Travel Time" = slider::slide_dbl(Travel_Time, mean, .before=48, .after = 47, .complete = TRUE)) %>%
+  mutate("7-day Moving Average Travel Time" = slider::slide_dbl(Travel_Time, mean, .before=336, .after = 335, .complete = TRUE)) %>%
+  ungroup()
+#dataset
 ```
 
-There are anomalies which sometimes occur during daylight savings time changes due to an unresolved software bug. Those datapoints can be removed.
-
-```{r}
-dataset %>%
-  filter(TSSU == "03021", Phase == 2) %>%
-  autoplot(Volume)
-```
-
-Time Series Decomposition Example
+# 1. Time Series Decomposition
 
 ```{r, fig.height=8, fig.width=8}
-dataset %>%
-  filter(TSSU == "03021", Phase == 2) %>%
-  filter(Volume < 250) %>%
-  #filter_index("2021") %>%
+# Decomposition example for Hourly Vehicle Traffic Volumes
+decomp_volume <-dataset %>%
   select(Volume) %>%
   fill_gaps() %>%
   na_locf() %>%
   group_by_key() %>%
   index_by(Hourly_TimeStamp = ~ floor_date(., unit="1 hour")) %>%
-  summarise(`Hourly Volume (Vehicles Per Hour)` = sum(Volume)) %>%
-  model(STL(`Hourly Volume (Vehicles Per Hour)`, robust = TRUE)) %>% #~ season(period = 96) + season(period = 96 * 7)
-  components() %>%
+  summarise(`Hourly_Volume` = sum(Volume)) %>%
+  model(STL(`Hourly_Volume`, robust = TRUE)) %>% #~ season(period = 96) + season(period = 96 * 7)
+  components()
+
+decomp_travel_time <- dataset %>%
+  select(Travel_Time) %>%
+  fill_gaps() %>%
+  na_locf() %>%
+  group_by_key() %>%
+  index_by(Hourly_TimeStamp = ~ floor_date(., unit="1 hour")) %>%
+  summarise(`Hourly_TT` = mean(Travel_Time)) %>%
+  model(STL(`Hourly_TT`, robust = TRUE)) %>% #~ season(period = 96) + season(period = 96 * 7)
+  components()
+
+decomp_volume %>%
+  #filter(TSSU == "03008", Phase == 2) %>% #filter will be needed later
   filter_index("2022-01") %>%
-  autoplot()
+  autoplot() + 
+    labs(
+        title = "STL decomposition Example of Traffic Volumes for 03008 during Jan 2022",
+        y="Vehicles Per Hour")
+
+#decomp_travel_time %>%
+  #filter(TSSU == "03008", Phase == 2) %>%
+#  filter_index("2022-01") %>%
+#  autoplot() + 
+#    labs(
+#        title = "STL decomposition Example of Travel Times for for 03008 during Jan 2022",
+#        y="Travel Time Minutes")
 
 ```
+
+
+\pagebreak
+# 2. Time Series Visualization
+
+This plot reveals some gaps in the data.
+
 ```{r}
+dataset %>%
+  filter(TSSU == "03008", Phase == 2) %>%
+  select(Volume) %>%
+  as.ts() %>%
+  ggplot_na_distribution()
 ```
+
+\pagebreak
+With the exception of holidays and unexpected events, the traffic at this locations is pretty consistent throughout the year. This visual also makes the gaps in data become more apparent.
+
+```{r}
+decomp_volume %>%
+  #filter(TSSU == "03008", Phase == 2) %>%
+  filter_index("2021") %>%
+  gg_season(period = 24*7)
+
+```
+
+\pagebreak
+# 3. Description of Time Series
+
+This plot gives an overview of how traffic volumes change seasonally at a particular location in Salem, OR. 
+
+```{r}
+dataset %>%
+  filter(TSSU == "03008", Phase == 2) %>%
+  autoplot(`1-day Moving Average Volume`, color = "light blue") +
+    geom_line(aes(y = `7-day Moving Average Volume`), color = "blue") +
+    labs(title = "7-day and 1-day Moving Average Volume for 03008",
+        y="Vehicles per 15-minute")
+
+```
+
+Traffic went down during COVID lockdowns March 2020, and again dropped during a wildfire in September 2020. There are regular dips during holidays in the winter and summer, with occasional unexpected dips due to snow on the road.  There is not a strong long term trend present for this location, but there will likely be a trend at other locations.
+
+There is strong seasonality at the levels of day, week, and year. There tends to be more traffic on average during the summer than winter. Weekday traffic is higher than weekend traffic, and midday traffic is higher than night time. 
+
+This time series is not stationary and will require some differencing to become stationary.
+
+\pagebreak
+# 4. Transformations
+
+
+
+
+
