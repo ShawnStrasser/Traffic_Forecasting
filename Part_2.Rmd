@@ -41,30 +41,24 @@ dataset <- read_parquet("volumes_traveltime.parquet") %>%
 # 1. Time Series Decomposition
 
 ```{r, fig.height=8, fig.width=8}
-# Decomposition example for Hourly Vehicle Traffic Volumes
-decomp_volume <-dataset %>%
+# Aggregate to hourly to force it to stop using "hour" as a season. should only be day/week/annual
+hourly_volume <-dataset %>%
   select(Volume) %>%
   fill_gaps() %>%
   na_locf() %>%
   group_by_key() %>%
   index_by(Hourly_TimeStamp = ~ floor_date(., unit="1 hour")) %>%
-  summarise(`Hourly_Volume` = sum(Volume)) %>%
+  summarise(`Hourly_Volume` = sum(Volume))
+
+# Decomposition example for Hourly Vehicle Traffic Volumes
+decomp_volume <- hourly_volume %>%
   model(STL(`Hourly_Volume`, robust = TRUE)) %>% #~ season(period = 96) + season(period = 96 * 7)
   components()
 
-decomp_travel_time <- dataset %>%
-  select(Travel_Time) %>%
-  fill_gaps() %>%
-  na_locf() %>%
-  group_by_key() %>%
-  index_by(Hourly_TimeStamp = ~ floor_date(., unit="1 hour")) %>%
-  summarise(`Hourly_TT` = mean(Travel_Time)) %>%
-  model(STL(`Hourly_TT`, robust = TRUE)) %>% #~ season(period = 96) + season(period = 96 * 7)
-  components()
 
 decomp_volume %>%
   #filter(TSSU == "03008", Phase == 2) %>% #filter will be needed later
-  filter_index("2022-01") %>%
+  filter_index("2022-03") %>%
   autoplot() + 
     labs(
         title = "STL decomposition Example of Traffic Volumes for 03008 during Jan 2022",
@@ -146,7 +140,49 @@ This time series is not stationary and will require some differencing to become 
 \pagebreak
 # 4. Model -- apply several models (transformations if needed), explain decisions
 
-```{r fig.height=8, fig.width=8}
+## Forecast using STL Decomposition
+This data includes complex seasonality which STL handles automatically, but will be more difficult for other types of models. For that reason, I'll start with STL.
+
+Below, the residuals are shown for a naive STL model with a trend window over the past week, and it does a good job of capturing the seasonality.  The ACF of residuals still shows a significant correlation at lag 1, so this model could be improved perhaps with some ARIMA terms, but overall this is pretty good.
+
+```{r STL, fig.width=8}
+
+fit_dcmp <- hourly_volume %>%
+  filter_index("2022-01" ~ "2022-03-13") %>%
+  model(stlf = decomposition_model(
+    STL(Hourly_Volume ~ trend(window = 24*7), robust = TRUE),
+    NAIVE(season_adjust)
+  ))
+
+fit_dcmp %>% gg_tsresiduals()
+
+```
+
+\pagebreak
+## Forecast using Dynamic Harmonic Regression
+This is a dynamic harmonic regression model fit to an ARIMA error structure, with 10 Fourier terms for the daily seasonal period, and 5 Fourier terms for the weekly seasonal period. The square root is used to ensure predictions remain positive.
+
+The ACF of residuals shows a significant correlation at lag 24, which is the seasonal day period. This means the model could be improved still, but it does seem pretty good.
+
+```{r}
+fit_harmonic <- hourly_volume %>%
+  filter_index("2022-01" ~ "2022-03-13") %>%
+  model(
+    dhr = ARIMA(sqrt(Hourly_Volume) ~ PDQ(0, 0, 0) + pdq(d = 0) +
+                  fourier(period = 24, K = 10) +
+                  fourier(period = 24*7, K = 5)))
+
+fit_harmonic %>% gg_tsresiduals()
+
+```
+
+
+\pagebreak
+## ARIMA
+
+ARIMA has been commonly used to forecast traffic, but the complex seasonality makes setting up a model difficult. The first step is to find a differencing combination that results in stationary data.
+
+```{r fig.height=12, fig.width=8}
 
 transform <- dataset %>%
   transmute(
@@ -161,14 +197,93 @@ transform <- dataset %>%
   )
 
 transform %>% 
-  filter_index("2022-01") %>%
+  filter_index("2022-03-18" ~.) %>%
   pivot_longer(cols=c(Volume, Diff_1, Diff_day, Diff_week, Diff_day_week, Diff_day_1, Diff_week_1, Diff_day_week_1), names_to = "key", values_to = "value") %>%
   autoplot(.vars = value) +
   facet_grid(vars(key), scales = "free_y")
   
 ```
+\pagebreak
+
+```{r}
+# Test if each transformation is stationary
+#Volume, Diff_1, Diff_day, Diff_week, Diff_day_week, Diff_day_1, Diff_week_1, Diff_day_week_1
+unitroot_kpss(transform$Diff_day_week_1)
+
+transform %>% fill_gaps() %>% ACF(Diff_day_1, lag_max = 96*7) %>% 
+  autoplot() + labs(title = "ACF of differencing by day, week, and 1 lag")
+
+transform %>% fill_gaps() %>% filter_index("2022-02") %>%
+  gg_tsdisplay(Diff_day_week_1, plot_type = "partial", lag = 96*7)
+```
+
+The significant spike at lag 1 in the ACF suggests a non-seasonal MA(1) component, while the significant spike at lag 96 suggest a seasonal MA(1). 
+ARIMA(0,1,1)(0,1,1)96
+
+```{r eval=FALSE, include=FALSE}
+fit2 <- dataset %>%
+  filter_index("2022-02") %>%
+  select(Volume) %>%
+  fill_gaps() %>%
+    model(
+      a1 = ARIMA(Volume ~ pdq(0,1,1) + PDQ(1,1,1, period = 96)),
+      a2 = ARIMA(Volume ~ pdq(0,1,1) + PDQ(0,1,1, period = 96)),
+      a3 = ARIMA(Volume ~ pdq(0,1,1) + PDQ(1,1,0, period = 96)),
+      a4 = ARIMA(Volume ~ PDQ(1,1,1, period = 96)),
+      b1 = ARIMA(Volume ~ pdq(0,1,1) + PDQ(1,0,1, period = 96*7)),
+      b2 = ARIMA(Volume ~ pdq(0,1,1) + PDQ(0,0,1, period = 96*7)),
+      b3 = ARIMA(Volume ~ pdq(0,1,1) + PDQ(1,0,0, period = 96*7)),
+      b4 = ARIMA(Volume ~ PDQ(1,1,1, period = 96*7))
+    )
 
 
 
+fit %>% pivot_longer(everything(), names_to = "Model name",
+                     values_to = "Orders")
 
+glance(fit2) %>% arrange(AICc) %>% select(.model:BIC)
+
+
+
+fit$stepwise #<ARIMA(4,0,0)(2,0,0)[4] w/ mean> (same as search)
+fit$search
+fit$arima01101196
+fit$a
+
+report(fit$a4)
+fit %>% gg_tsresiduals()
+
+```
+
+
+
+\pagebreak
+# 5. Prediction
+
+Prediction using STL model
+
+```{r STL_prediction, fig.width=8}
+fit_dcmp %>%
+  forecast(h=24*7*2) %>%
+  autoplot(hourly_volume %>% filter_index("2022-03-07" ~ "2022-03-27"))+
+  labs(y = "Vehicles per Hour",
+       title = "Actual Traffic Volume and STL Forecasted Volume")
+
+
+accuracy(fit_dcmp %>% forecast(h=24*7*2), hourly_volume %>% filter_index("2022-03-07" ~ "2022-03-27"))
+```
+
+## Prediction using Dynamic Harmonic Regression 
+
+```{r harmonic}
+fit_harmonic %>%
+  forecast(h=24*7*2) %>%
+  autoplot(hourly_volume %>% filter_index("2022-03-07" ~ "2022-03-27"))+
+  labs(y = "Vehicles per Hour",
+       title = "Actual Traffic Volume and STL Forecasted Volume")
+
+accuracy(fit_harmonic %>% forecast(h=24*7*2), hourly_volume %>% filter_index("2022-03-07" ~ "2022-03-27"))
+```
+## Model Accuracy
+The STL model was the most accurate, with a mean absolute percentage error of 7.8% vs 17.4% for dynamic harmonic regression. 
 
