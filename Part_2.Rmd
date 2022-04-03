@@ -182,76 +182,73 @@ fit_harmonic %>% gg_tsresiduals()
 
 ARIMA has been commonly used to forecast traffic, but the complex seasonality makes setting up a model difficult. The first step is to find a differencing combination that results in stationary data.
 
-```{r fig.height=12, fig.width=8}
+```{r fig.height=8, fig.width=8}
 
-transform <- dataset %>%
+transform <- hourly_volume %>%
   transmute(
-    Volume = Volume,
-    Diff_1 = difference(Volume, 1),
-    Diff_day = difference(Volume, 4*24),
-    Diff_week = difference(Volume, 4*24*7),
-    Diff_day_week = difference(difference(Volume, 4*24), 4*24*7),
-    Diff_day_1 = difference(difference(Volume, 4*24), 1),
-    Diff_week_1 = difference(difference(Volume, 4*24*7), 1),
-    Diff_day_week_1 = difference(difference(difference(Volume, 1), 4*24), 4*24*7)
+    Volume = Hourly_Volume,
+    Diff_1 = difference(Hourly_Volume, 1),
+    Diff_day = difference(Hourly_Volume, 4*24),
+    Diff_day_day = difference(difference(Hourly_Volume, 4*24), 4*24),
+    Diff_week = difference(Hourly_Volume, 4*24*7),
+    Diff_day_week = difference(difference(Hourly_Volume, 4*24), 4*24*7),
+    Diff_day_1 = difference(difference(Hourly_Volume, 4*24), 1),
+    Diff_week_1 = difference(difference(Hourly_Volume, 4*24*7), 1),
+    Diff_day_week_1 = difference(difference(difference(Hourly_Volume, 1), 4*24), 4*24*7)
   )
 
 transform %>% 
   filter_index("2022-03-18" ~.) %>%
-  pivot_longer(cols=c(Volume, Diff_1, Diff_day, Diff_week, Diff_day_week, Diff_day_1, Diff_week_1, Diff_day_week_1), names_to = "key", values_to = "value") %>%
+  pivot_longer(cols=c(Volume, Diff_1, Diff_day, Diff_day_1, Diff_day_day), names_to = "key", values_to = "value") %>%
   autoplot(.vars = value) +
   facet_grid(vars(key), scales = "free_y")
+
+
+
   
 ```
 \pagebreak
 
-```{r}
+A KPSS test shows the double difference of the day period and 1 lag creates stationary data, but from plotin this double differenced data and the ACF/PACF it's actually clear that there is still seasonality present at the weekly level. The ACF and PACF both appear sinusoidal. 
+
+```{r fig.width=8}
 # Test if each transformation is stationary
 #Volume, Diff_1, Diff_day, Diff_week, Diff_day_week, Diff_day_1, Diff_week_1, Diff_day_week_1
-unitroot_kpss(transform$Diff_day_week_1)
+unitroot_kpss(transform$Diff_day_1)
 
-transform %>% fill_gaps() %>% ACF(Diff_day_1, lag_max = 96*7) %>% 
-  autoplot() + labs(title = "ACF of differencing by day, week, and 1 lag")
+#transform %>% fill_gaps() %>% ACF(Diff_day_1, lag_max = 96*7) %>% 
+#  autoplot() + labs(title = "ACF of differencing by day, week, and 1 lag")
 
 transform %>% fill_gaps() %>% filter_index("2022-02") %>%
-  gg_tsdisplay(Diff_day_week_1, plot_type = "partial", lag = 96*7)
+  gg_tsdisplay(Diff_day_1, plot_type = "partial", lag = 24)
+
+
 ```
 
-The significant spike at lag 1 in the ACF suggests a non-seasonal MA(1) component, while the significant spike at lag 96 suggest a seasonal MA(1). 
-ARIMA(0,1,1)(0,1,1)96
+An ARIMA (1,1,3)(2,1,0)[24] had the lowest AIC, so it was selected for use. There is however autocorrelation in the residuals, so this model is not likley to work well. 
 
-```{r eval=FALSE, include=FALSE}
-fit2 <- dataset %>%
-  filter_index("2022-02") %>%
-  select(Volume) %>%
+```{r}
+
+fit_ARIMA <- hourly_volume %>%
+  filter_index("2022-01" ~ "2022-03-13") %>%
   fill_gaps() %>%
     model(
-      a1 = ARIMA(Volume ~ pdq(0,1,1) + PDQ(1,1,1, period = 96)),
-      a2 = ARIMA(Volume ~ pdq(0,1,1) + PDQ(0,1,1, period = 96)),
-      a3 = ARIMA(Volume ~ pdq(0,1,1) + PDQ(1,1,0, period = 96)),
-      a4 = ARIMA(Volume ~ PDQ(1,1,1, period = 96)),
-      b1 = ARIMA(Volume ~ pdq(0,1,1) + PDQ(1,0,1, period = 96*7)),
-      b2 = ARIMA(Volume ~ pdq(0,1,1) + PDQ(0,0,1, period = 96*7)),
-      b3 = ARIMA(Volume ~ pdq(0,1,1) + PDQ(1,0,0, period = 96*7)),
-      b4 = ARIMA(Volume ~ PDQ(1,1,1, period = 96*7))
+      a1 = ARIMA(Hourly_Volume ~ pdq(1,0,3) + PDQ(2,1,0, period = 24)),
+      a2 = ARIMA(Hourly_Volume ~ pdq(1,1,3) + PDQ(2,1,0, period = 24)),
+      b1 = ARIMA(Hourly_Volume ~ pdq(4,0,0) + PDQ(2,1,0, period = 24)),
+      b2 = ARIMA(Hourly_Volume ~ pdq(4,1,0) + PDQ(2,1,0, period = 24))
     )
 
 
-
-fit %>% pivot_longer(everything(), names_to = "Model name",
+fit_ARIMA %>% pivot_longer(everything(), names_to = "Model name",
                      values_to = "Orders")
 
-glance(fit2) %>% arrange(AICc) %>% select(.model:BIC)
+glance(fit_ARIMA) %>% arrange(AICc)
 
 
+fit_ARIMA %>% select(a2) %>% gg_tsresiduals()
 
-fit$stepwise #<ARIMA(4,0,0)(2,0,0)[4] w/ mean> (same as search)
-fit$search
-fit$arima01101196
-fit$a
 
-report(fit$a4)
-fit %>% gg_tsresiduals()
 
 ```
 
@@ -284,6 +281,23 @@ fit_harmonic %>%
 
 accuracy(fit_harmonic %>% forecast(h=24*7*2), hourly_volume %>% filter_index("2022-03-07" ~ "2022-03-27"))
 ```
-## Model Accuracy
-The STL model was the most accurate, with a mean absolute percentage error of 7.8% vs 17.4% for dynamic harmonic regression. 
+ 
 
+## Prediction using ARIMA model
+
+```{r ARIMA_prediction, fig.width=8}
+fit_ARIMA %>%
+  select(a2) %>%
+  forecast(h=24*7*2) %>%
+  autoplot(hourly_volume %>% filter_index("2022-03-07" ~ "2022-03-27"))+
+  labs(y = "Vehicles per Hour",
+       title = "Actual Traffic Volume and STL Forecasted Volume")
+
+
+accuracy(fit_ARIMA %>% select(a2) %>% forecast(h=24*7*2), hourly_volume %>% filter_index("2022-03-07" ~ "2022-03-27"))
+```
+
+
+
+## Model Accuracy
+The STL model was the most accurate, with a mean absolute percentage error of 7.8% vs 17.4% for dynamic harmonic regression, and 22.8% for ARIMA. The ARIMA model does did not work well because it does not account for the multiple seasonal periods present in the data. 
