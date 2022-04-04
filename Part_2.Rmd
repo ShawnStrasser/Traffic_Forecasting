@@ -1,7 +1,7 @@
 ---
 title: "Final Project Part 2: Predicting Automobile Traffic"
 author: "Sreeti Ravi, Shawn Strasser"
-date: "3/26/2022"
+date: "4/3/2022"
 output: pdf_document
 ---
 
@@ -74,13 +74,44 @@ decomp_volume %>%
 
 ```
 
+```{r fig.height=5, fig.width=8}
+#classical decomposition example
+decomp2 <-dataset %>%
+  select(Volume) %>%
+  fill_gaps() %>%
+  na_locf() %>%
+  group_by_key() %>%
+  index_by(Hourly_TimeStamp = ~ floor_date(., unit="1 hour")) %>%
+  summarise(`Hourly_Volume` = sum(Volume)) %>%
+  model(classical_decomposition(`Hourly_Volume`, type="additive")) %>% 
+  components()
+
+decomp2 %>%
+  filter_index("2022-01") %>%
+  autoplot() +
+  labs(title = "Classical Decomposition of Traffic Volumes for Jan 2022")
+
+```
+
 
 \pagebreak
 # 2. Time Series Visualization
 
-This plot reveals some gaps in the data.
-
 ```{r}
+subset <- dataset %>% 
+  filter(TSSU == "03008", Phase == 2) %>%
+  tsibble::fill_gaps()
+```
+
+Autoplot of a subset of the data reveals a large gap right in the middle.
+
+```{r fig.height=4, fig.width=6}
+autoplot(subset)
+```
+
+ggplot_na_distribution function shows other gaps as well, which will need to be filled in.
+
+```{r fig.height=4, fig.width=6}
 dataset %>%
   filter(TSSU == "03008", Phase == 2) %>%
   select(Volume) %>%
@@ -89,9 +120,17 @@ dataset %>%
 ```
 
 \pagebreak
-With the exception of holidays and unexpected events, the traffic at this locations is pretty consistent throughout the year. This visual also makes the gaps in data become more apparent.
+Here, the years 2020, 2021 and 2022 are ploted together. With the exception of holidays and unexpected events, the traffic at this locations is pretty consistent throughout the year. 
 
-```{r}
+```{r fig.height=4, fig.width=6}
+subset %>%
+  #filter_index("2022") %>%
+  gg_season(Volume)
+```
+
+Here, each week of 2021 is plotted.
+
+```{r fig.height=4, fig.width=6}
 decomp_volume %>%
   #filter(TSSU == "03008", Phase == 2) %>%
   filter_index("2021") %>%
@@ -100,7 +139,7 @@ decomp_volume %>%
 ```
 
 \pagebreak
-ACF plots reveal strong and persistent autocorrelation over days and weeks
+ACF and PACF plots reveal strong and persistent autocorrelation over days and weeks
 
 ```{r fig.width=8}
 
@@ -119,7 +158,7 @@ dataset %>%
 \pagebreak
 # 3. Description of Time Series
 
-This plot gives an overview of how traffic volumes change seasonally at a particular location in Salem, OR. 
+This plot gives a good overview of how traffic volumes changed since 2020. The location where this data comes from is a downtown traffic signal in Salem, Oregon. 
 
 ```{r}
 dataset %>%
@@ -131,7 +170,7 @@ dataset %>%
 
 ```
 
-Traffic went down during COVID lockdowns March 2020, and again dropped during a wildfire in September 2020. There are regular dips during holidays in the winter and summer, with occasional unexpected dips due to snow on the road.  There is not a strong long term trend present for this location, but there will likely be a trend at other locations.
+Traffic went down during COVID lockdowns March 2020, and again dropped during a wildfire in September 2020. There are regular dips during holidays in the winter and summer, with occasional unexpected dips due to snow on the road.  There is not a strong long term trend present for this location, but there will likely be a trend at other traffic signal locations.
 
 There is strong seasonality at the levels of day, week, and year. There tends to be more traffic on average during the summer than winter. Weekday traffic is higher than weekend traffic, and midday traffic is higher than night time. 
 
@@ -140,12 +179,27 @@ This time series is not stationary and will require some differencing to become 
 \pagebreak
 # 4. Model -- apply several models (transformations if needed), explain decisions
 
-## Forecast using STL Decomposition
-This data includes complex seasonality which STL handles automatically, but will be more difficult for other types of models. For that reason, I'll start with STL.
+## Seasonal Naive model with lags at 1 day, 1 week, and 1 year
+The residuals are highly correlated so this model could be improved. 
 
-Below, the residuals are shown for a naive STL model with a trend window over the past week, and it does a good job of capturing the seasonality.  The ACF of residuals still shows a significant correlation at lag 1, so this model could be improved perhaps with some ARIMA terms, but overall this is pretty good.
+```{r SNAIVE}
+#takes a while to run
+fit_SNAIVE <- hourly_volume %>%
+  filter_index(~"2022-03-13") %>%
+  model(SNAIVE(Hourly_Volume ~ lag("week")))
 
-```{r STL, fig.width=8}
+fit_SNAIVE %>% gg_tsresiduals()
+
+```
+
+\pagebreak
+## STL Decomposition
+
+STL works well because it automatically handles the complex seasonal periods present in the data, which include day, week, and year.
+
+The ACF of residuals shows a significant correlation only at lag 1, so this model could be improved perhaps with some ARIMA terms, but overall this is pretty good. This model will be a good option to use.
+
+```{r STL}
 
 fit_dcmp <- hourly_volume %>%
   filter_index("2022-01" ~ "2022-03-13") %>%
@@ -159,7 +213,7 @@ fit_dcmp %>% gg_tsresiduals()
 ```
 
 \pagebreak
-## Forecast using Dynamic Harmonic Regression
+## Dynamic Harmonic Regression
 This is a dynamic harmonic regression model fit to an ARIMA error structure, with 10 Fourier terms for the daily seasonal period, and 5 Fourier terms for the weekly seasonal period. The square root is used to ensure predictions remain positive.
 
 The ACF of residuals shows a significant correlation at lag 24, which is the seasonal day period. This means the model could be improved still, but it does seem pretty good.
@@ -209,9 +263,9 @@ transform %>%
 ```
 \pagebreak
 
-A KPSS test shows the double difference of the day period and 1 lag creates stationary data, but from plotin this double differenced data and the ACF/PACF it's actually clear that there is still seasonality present at the weekly level. The ACF and PACF both appear sinusoidal. 
+A KPSS test shows the double difference of the day period and 1 lag creates stationary data, but from the plot of the double differenced data and the ACF/PACF it's actually clear that there is still seasonality present at the weekly level. The ACF and PACF both appear sinusoidal. 
 
-```{r fig.width=8}
+```{r}
 # Test if each transformation is stationary
 #Volume, Diff_1, Diff_day, Diff_week, Diff_day_week, Diff_day_1, Diff_week_1, Diff_day_week_1
 unitroot_kpss(transform$Diff_day_1)
@@ -227,7 +281,7 @@ transform %>% fill_gaps() %>% filter_index("2022-02") %>%
 
 An ARIMA (1,1,3)(2,1,0)[24] had the lowest AIC, so it was selected for use. There is however autocorrelation in the residuals, so this model is not likley to work well. 
 
-```{r}
+```{r ARIMA_model}
 
 fit_ARIMA <- hourly_volume %>%
   filter_index("2022-01" ~ "2022-03-13") %>%
@@ -257,7 +311,19 @@ fit_ARIMA %>% select(a2) %>% gg_tsresiduals()
 \pagebreak
 # 5. Prediction
 
-Prediction using STL model
+## Seasonal Naive model
+
+```{r SNAIVE_prediction, fig.width=8}
+fit_SNAIVE %>% forecast(h = "2 week") %>% 
+  autoplot(hourly_volume %>% filter_index("2022-03-07"~ "2022-03-27")) +
+  labs(y = "Vehicles per Hour",
+       title = "Actual Traffic Volume and STL Forecasted Volume")
+
+accuracy(fit_SNAIVE %>% forecast(h="2 week"), hourly_volume %>% filter_index("2022-03-07" ~ "2022-03-27"))
+```
+
+\pagebreak
+## STL model
 
 ```{r STL_prediction, fig.width=8}
 fit_dcmp %>%
@@ -269,10 +335,10 @@ fit_dcmp %>%
 
 accuracy(fit_dcmp %>% forecast(h=24*7*2), hourly_volume %>% filter_index("2022-03-07" ~ "2022-03-27"))
 ```
+\pagebreak
+## Dynamic Harmonic Regression 
 
-## Prediction using Dynamic Harmonic Regression 
-
-```{r harmonic}
+```{r harmonic, fig.width=8}
 fit_harmonic %>%
   forecast(h=24*7*2) %>%
   autoplot(hourly_volume %>% filter_index("2022-03-07" ~ "2022-03-27"))+
@@ -282,8 +348,8 @@ fit_harmonic %>%
 accuracy(fit_harmonic %>% forecast(h=24*7*2), hourly_volume %>% filter_index("2022-03-07" ~ "2022-03-27"))
 ```
  
-
-## Prediction using ARIMA model
+\pagebreak
+## ARIMA model
 
 ```{r ARIMA_prediction, fig.width=8}
 fit_ARIMA %>%
@@ -300,4 +366,4 @@ accuracy(fit_ARIMA %>% select(a2) %>% forecast(h=24*7*2), hourly_volume %>% filt
 
 
 ## Model Accuracy
-The STL model was the most accurate, with a mean absolute percentage error of 7.8% vs 17.4% for dynamic harmonic regression, and 22.8% for ARIMA. The ARIMA model does did not work well because it does not account for the multiple seasonal periods present in the data. 
+The STL model was the most accurate, with a mean absolute percentage error of 7.8% vs 8.8% for seasonal naive, 17.4% for dynamic harmonic regression, and 22.8% for ARIMA. The ARIMA model does did not work well because it does not account for the multiple seasonal periods present in the data.
