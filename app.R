@@ -35,8 +35,24 @@ server <- function(input, output) {
 
     output$testplot <- renderPlot({
       dataset %>%
-        filter(TSSU == input$location) %>%
+        filter(TSSU == input$location,
+               TimeStamp >= input$daterange[1],
+               TimeStamp <= input$daterange[2]) %>%
         autoplot()
+    
+      
+#    agg_level <- switch(input$level, "15 Minute" = "15 Minute", "Hourly" = "1 hour", "Daily" = "1 day", "Weekly" = "1 week")
+      
+#    data <- dataset %>%
+#      select(Volume) %>%
+#      fill_gaps() %>%
+#      na_locf() %>%
+#      group_by_key() %>%
+#      ifelse(input$level!= "15 Minute", 
+#             index_by(Hourly_TimeStamp = ~ floor_date(., unit = agg_level)) %>%
+#               summarise(`Volume` = sum(Volume))
+#      )
+      
     })
 
     
