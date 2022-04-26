@@ -29,65 +29,75 @@ ui <- fluidPage(
     unique(dataset$TSSU)
   ),
   dateRangeInput("daterange", "Date Range", start = "2020-01-01", end = "2022-04-01"),
-  selectInput("datatype", "Choose Traffic Volumes or Travel Times", c("Volume", "Travel_Time")),
+  selectInput(
+    "datatype",
+    "Choose Traffic Volumes or Travel Times",
+    c("Volume", "Travel_Time")
+  ),
   sliderInput("steps", "Forecast Steps", 1, 300, 96, step = 1),
-  plotOutput("testplot"),
-  textOutput("level")
+  plotOutput("testplot")
 )
 
 
 # Define server logic
 server <- function(input, output) {
-  output$testplot <- renderPlot({
+  # Initial data filtering/processing steps
+  r_data <- reactive({
+    dataset %>%
+      filter(
+        TSSU == input$location,
+        TimeStamp >= input$daterange[1],
+        TimeStamp <= input$daterange[2]
+      ) %>%
+      select(input$datatype) %>%
+      fill_gaps() %>%
+      na_locf() %>%
+      group_by_key() %>%
+      mutate(TimeStamp_level = floor_date(TimeStamp, unit = input$level))
+  })
+  
+  # If the aggregation level is less than 1 day, keep TimeStamp as datetime
+  # If >= 1 day, convert TimeStamp to date. Otherwise index_by won't work
+  r_data2 <- reactive({
     if (substr(input$level, nchar(input$level) - 5, nchar(input$level)) == "minute")
     {
-      data <- dataset %>%
-        filter(
-          TSSU == input$location,
-          TimeStamp >= input$daterange[1],
-          TimeStamp <= input$daterange[2]
-        ) %>%
-        select(input$datatype) %>%
-        fill_gaps() %>%
-        na_locf() %>%
-        group_by_key() %>%
-        mutate(TimeStamp_level = floor_date(TimeStamp, unit = input$level)) %>%
-        index_by(TimeStamp_level) %>%
-        summarise(`Traffic Counts` = sum(Volume)) 
-      data %>%
-        model(decomposition_model(
-          STL(`Traffic Counts`, robust = TRUE),
-          NAIVE(season_adjust)
-        )) %>%
-        forecast(h = input$steps) %>%
-        autoplot(data, level=FALSE)
+      r_data() %>% index_by(TimeStamp_level) %>%
+        summarise(`value` = sum(.data[[input$datatype]]))
     }
     else
     {
-      data <- dataset %>%
-        filter(
-          TSSU == input$location,
-          TimeStamp >= input$daterange[1],
-          TimeStamp <= input$daterange[2]
-        ) %>%
-        select(input$datatype) %>%
-        fill_gaps() %>%
-        na_locf() %>%
-        group_by_key() %>%
-        mutate(TimeStamp_level = as.Date(floor_date(TimeStamp, unit = input$level))) %>%
-        index_by(TimeStamp_level) %>%
-        summarise(`Traffic Counts` = sum(Volume)) 
-      data %>%
-        model(decomposition_model(
-          STL(`Traffic Counts`, robust = TRUE),
-          NAIVE(season_adjust)
-        )) %>%
-        forecast(h = input$steps) %>%
-        autoplot(data, level=FALSE)
+      r_data() %>% index_by(TimeStamp_level = as.Date(TimeStamp_level)) %>%
+        summarise(`value` = sum(.data[[input$datatype]]))
     }
   })
   
+  # Create a plot
+  output$testplot7 <- renderPlot({
+    r_data2() %>%
+      model(decomposition_model(STL(`value`, robust = TRUE),
+                                NAIVE(season_adjust))) %>%
+      forecast(h = input$steps) %>%
+      autoplot(r_data2(), level = FALSE)
+  })
   
+  #Better Plot
+  output$testplot <- renderPlot({
+    forecast <- r_data2() %>%
+      model(decomposition_model(STL(`value`, robust = TRUE),
+                                NAIVE(season_adjust))) %>%
+      forecast(h = input$steps) 
+    
+    r_data2() %>%
+      ggplot(aes(
+        x = TimeStamp_level,
+        y = value#,
+        #colour = factor(Phase)
+      )) +
+      #geom_line() +
+      geom_line(forecast)
+  })
+  
+
   
   
 }
