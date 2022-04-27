@@ -18,24 +18,56 @@ units <- "1 hour"
 # Define UI for application
 ui <- fluidPage(
   titlePanel("Traffic Forecasting"),
-  selectInput(
-    "level",
-    "Select Aggregation Level",
-    c("15 minute", "60 minute", "day", "week", "month")
-  ),
-  selectInput(
-    "location",
-    "Select Traffic Signal Location",
-    unique(dataset$TSSU)
-  ),
-  dateRangeInput("daterange", "Date Range", start = "2020-01-01", end = "2022-04-01"),
-  selectInput(
-    "datatype",
-    "Choose Traffic Volumes or Travel Times",
-    c("Volume", "Travel_Time")
-  ),
-  sliderInput("steps", "Forecast Steps", 1, 300, 96, step = 1),
-  plotOutput("testplot")
+  
+  sidebarLayout(
+    
+    sidebarPanel(
+      
+      selectInput(
+        "level",
+        "Select Aggregation Level",
+        c("15 minute", "60 minute", "day", "week", "month")),
+      
+      br(),
+      
+      selectInput(
+        "location",
+        "Select Traffic Signal Location",
+        unique(dataset$TSSU)
+      ),
+      
+      br(),
+      
+      dateRangeInput("daterange", "Date Range", start = "2020-01-01", end = "2022-04-01"),
+      
+      br(),
+      
+      selectInput(
+        "datatype",
+        "Choose Traffic Volumes or Travel Times",
+        c("Volume", "Travel_Time")
+      ),
+      
+      br(),
+      
+      sliderInput("steps", "Forecast Steps", 1, 300, 96, step = 1)
+    ), 
+  
+  mainPanel(
+    p("This app forecasts traffic volumes and travel times at traffic signals 
+       using historical volume and travel time data. The forecasted 
+       volumes and travel times can be used by traffic engineers to 
+       determine how well traffic signal timing plans will work in 
+       the future. The relationship between vehicle volumes and travel
+       times can also reveal when a traffic signal system is likely to
+       suffer from congestion."),
+    tabsetPanel(type="tabs",
+                tabPanel("Plot", plotOutput("testplot")),
+                tabPanel("Summary", verbatimTextOutput("summary")),
+                tabPanel("Table", tableOutput("table"))
+                )
+    )
+  )
 )
 
 
@@ -72,7 +104,7 @@ server <- function(input, output) {
   })
   
   # Create a plot
-  output$testplot7 <- renderPlot({
+  output$testplot <- renderPlot({
     r_data2() %>%
       model(decomposition_model(STL(`value`, robust = TRUE),
                                 NAIVE(season_adjust))) %>%
@@ -81,25 +113,21 @@ server <- function(input, output) {
   })
   
   #Better Plot
-  output$testplot <- renderPlot({
+  output$testplot2 <- renderPlot({
     forecast <- r_data2() %>%
       model(decomposition_model(STL(`value`, robust = TRUE),
                                 NAIVE(season_adjust))) %>%
       forecast(h = input$steps) 
     
     r_data2() %>%
-      ggplot(aes(
+      ggplot(mapping=aes(
         x = TimeStamp_level,
-        y = value#,
+        y = value
         #colour = factor(Phase)
       )) +
       #geom_line() +
       geom_line(forecast)
   })
-  
-
-  
-  
 }
 
 # Run the application
