@@ -25,13 +25,13 @@ dataset <-
     all.x = TRUE
   ) %>%
   select(-Phase,-TSSU) %>%
-  mutate(Data = "Actual") %>%
+  mutate(Type = "Actual") %>%
   as_tsibble(
     index = TimeStamp,
     key = c(
       "Location Description",
       "Bearing",
-      "Data"
+      "Type"
     )
   ) %>%
   fill_gaps() %>%
@@ -201,7 +201,7 @@ server <- function(input, output) {
       select(-.model) %>%
       select(.mean) %>%
       rename("value" = .mean) %>%
-      mutate(Data = "Forecast") %>%
+      mutate(Type = "Forecast") %>%
       bind_rows(r_data3()) %>%
       autoplot(value) +
       scale_color_manual(values = c("light blue", "pink", "blue", "red")) +
