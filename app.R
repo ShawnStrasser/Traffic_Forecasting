@@ -12,11 +12,35 @@ library(arrow)
 
 # Set the system timezone to UTC
 Sys.setenv(TZ = "UTC")
+
 # Read dataset
-dataset <- read_parquet("data.parquet")
-units <- "1 hour"
+dim <- readxl::read_xlsx("dimension_table.xlsx") %>%
+  select(TSSU, Phase, Bearing, "Location Description")
+
+dataset <-
+  merge(
+    x = read_parquet("data.parquet"),
+    y = dim,
+    by = c("TSSU", "Phase"),
+    all.x = TRUE
+  ) %>%
+  select(-Phase,-TSSU) %>%
+  mutate(Data = "Actual") %>%
+  as_tsibble(
+    index = TimeStamp,
+    key = c(
+      "Location Description",
+      "Bearing",
+      "Data"
+    )
+  ) %>%
+  fill_gaps() %>%
+  na_seasplit(algorithm = "locf", find_frequency = TRUE)
+
 # Define UI for application
-ui <- fluidPage(
+ui <- fluidPage( 
+  theme = shinythemes::shinytheme('superhero'),
+  
   titlePanel("Traffic Forecasting"),
   
   sidebarLayout(
@@ -26,19 +50,24 @@ ui <- fluidPage(
       selectInput(
         "level",
         "Select Aggregation Level",
-        c("15 minute", "60 minute", "day", "week", "month")),
+        c("15 minute", "60 minute", "day", "week")),
       
       br(),
       
       selectInput(
         "location",
         "Select Traffic Signal Location",
-        unique(dataset$TSSU)
+        unique(dataset$"Location Description")
       ),
       
       br(),
       
-      dateRangeInput("daterange", "Date Range", start = "2020-01-01", end = "2022-04-01"),
+      dateRangeInput(
+        "daterange",
+        "Date Range (data avaiable from Jan 2020 through March 2022)",
+        start = "2022-01-01",
+        end = "2022-04-01"
+      ),
       
       br(),
       
@@ -50,7 +79,7 @@ ui <- fluidPage(
       
       br(),
       
-      sliderInput("steps", "Forecast Steps", 1, 300, 96, step = 1)
+      sliderInput("steps", "Number of Weeks to Forecast", 1, 52, 2, step = 1)
     ), 
   
   mainPanel(
@@ -62,7 +91,7 @@ ui <- fluidPage(
        times can also reveal when a traffic signal system is likely to
        suffer from congestion."),
     tabsetPanel(type="tabs",
-                tabPanel("Plot", plotOutput("testplot")),
+                tabPanel("Plot", plotly::plotlyOutput("plot")),
                 tabPanel("Summary", verbatimTextOutput("summary")),
                 tabPanel("Table", tableOutput("table"))
                 )
@@ -73,17 +102,60 @@ ui <- fluidPage(
 
 # Define server logic
 server <- function(input, output) {
-  # Initial data filtering/processing steps
+  
+  # Reactive Plot Title
+  title <- reactive({
+    paste(input$datatype, "Forecast for", input$location, sep = " ")
+  }) 
+  
+  # Reactive Y axis label
+  y_axis <- reactive({
+    if (input$datatype == "Volume")
+    {
+      paste("Total Vehicles per", input$level, sep = " ")
+    }
+    else
+    {
+      "Average Segment Travel Time Minutes"
+    }
+  })   
+  
+  # Reactive number of Forecast Steps from user input
+  r_steps <- reactive({
+    switch(
+      input$level,
+      "15 minute" = 7 * 24 * 4,
+      "60 minute" = 7 * 24,
+      "day" = 7,
+      "week" = 1
+    ) * input$steps
+  })
+  
+  # Reactive Seasonal Periods for Decomposition
+  # If aggregation level is less than day, use "day", else use "year"
+  r_period <- reactive({
+    if (substr(input$level, nchar(input$level) - 5, nchar(input$level)) == "minute")
+    {
+      "day"
+    }
+    else
+    {
+      "year"
+    }
+  })
+  
+  
+  # Now, process the data
+  # Frist filter per user selection
   r_data <- reactive({
     dataset %>%
       filter(
-        TSSU == input$location,
+        `Location Description` == input$location,
         TimeStamp >= input$daterange[1],
         TimeStamp <= input$daterange[2]
       ) %>%
       select(input$datatype) %>%
-      fill_gaps() %>%
-      na_locf() %>%
+      select(-"Location Description") %>%
       group_by_key() %>%
       mutate(TimeStamp_level = floor_date(TimeStamp, unit = input$level))
   })
@@ -93,41 +165,51 @@ server <- function(input, output) {
   r_data2 <- reactive({
     if (substr(input$level, nchar(input$level) - 5, nchar(input$level)) == "minute")
     {
-      r_data() %>% index_by(TimeStamp_level) %>%
-        summarise(`value` = sum(.data[[input$datatype]]))
+      r_data() %>% index_by(TimeStamp_level)
     }
     else
     {
-      r_data() %>% index_by(TimeStamp_level = as.Date(TimeStamp_level)) %>%
-        summarise(`value` = sum(.data[[input$datatype]]))
+      r_data() %>% index_by(TimeStamp_level = as.Date(TimeStamp_level))
     }
   })
   
-  # Create a plot
-  output$testplot <- renderPlot({
-    r_data2() %>%
-      model(decomposition_model(STL(`value`, robust = TRUE),
-                                NAIVE(season_adjust))) %>%
-      forecast(h = input$steps) %>%
-      autoplot(r_data2(), level = FALSE)
+  # Summarize with Sum for Volume, but use Mean for Travel Time
+  r_data3 <- reactive({
+    if (input$datatype == "Volume")
+    {
+      r_data2() %>% summarise(`value` = sum(.data[[input$datatype]]))
+    }
+    else
+    {
+      r_data2() %>% summarise(`value` = mean(.data[[input$datatype]]))
+    }
   })
   
-  #Better Plot
-  output$testplot2 <- renderPlot({
-    forecast <- r_data2() %>%
-      model(decomposition_model(STL(`value`, robust = TRUE),
-                                NAIVE(season_adjust))) %>%
-      forecast(h = input$steps) 
-    
-    r_data2() %>%
-      ggplot(mapping=aes(
-        x = TimeStamp_level,
-        y = value
-        #colour = factor(Phase)
-      )) +
-      #geom_line() +
-      geom_line(forecast)
-  })
+  
+  # Create a Plot
+  final_plot <- function() {
+    r_data3() %>% 
+      model(decomposition_model(
+      STL(
+        `value` ~ season(period = "week") + season(period = r_period()),
+        robust = TRUE
+      ),
+      NAIVE(season_adjust)
+    )) %>%
+      forecast(h = r_steps()) %>%
+      as_tsibble() %>%
+      select(-.model) %>%
+      select(.mean) %>%
+      rename("value" = .mean) %>%
+      mutate(Data = "Forecast") %>%
+      bind_rows(r_data3()) %>%
+      autoplot(value) +
+      scale_color_manual(values = c("light blue", "pink", "blue", "red")) +
+      labs(title = title(), y = y_axis())
+  }
+  
+  output$plot <- plotly::renderPlotly(final_plot())
+  
 }
 
 # Run the application
