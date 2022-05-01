@@ -6,6 +6,7 @@ library(shiny)
 library(fpp3)
 library(imputeTS)
 library(arrow)
+library(DT)
 # Note: run below to make arrow work in Shiny Server
 #Sys.setenv(LIBARROW_MINIMAL="false")
 #install.packages("arrow")
@@ -79,7 +80,12 @@ ui <- fluidPage(
       
       br(),
       
-      sliderInput("steps", "Number of Weeks to Forecast", 1, 52, 2, step = 1)
+      sliderInput("steps", "Number of Weeks to Forecast", 1, 52, 2, step = 1),
+      
+      br(),
+      
+      downloadButton(
+        outputId = "download_data", label="Download")
     ), 
   
   mainPanel(
@@ -90,19 +96,47 @@ ui <- fluidPage(
        the future. The relationship between vehicle volumes and travel
        times can also reveal when a traffic signal system is likely to
        suffer from congestion."),
+    tags$style(HTML("
+                    .dataTables_wrapper .dataTables_length, .dataTables_wrapper .dataTables_filter, .dataTables_wrapper .dataTables_info, .dataTables_wrapper .dataTables_processing, .dataTables_wrapper .dataTables_paginate, .dataTables_wrapper .dataTables_paginate .paginate_button.current:hover {
+                    color: #ffffff;
+                    }
+      ### ADD THIS HERE ###
+                    .dataTables_wrapper .dataTables_paginate .paginate_button{box-sizing:border-box;display:inline-block;min-width:1.5em;padding:0.5em 1em;margin-left:2px;text-align:center;text-decoration:none !important;cursor:pointer;*cursor:hand;color:#ffffff !important;border:1px solid transparent;border-radius:2px}
+
+      ###To change text and background color of the `Select` box ###
+                    div.dataTables_length select {
+                           color: green !important;
+                           background-color: blue !important
+                           }
+
+      ###To change text and background color of the `Search` box ###
+                    .dataTables_filter input {
+                            color: #ffffff;
+                            background-color: #ffffff
+                           }
+
+                    thead {
+                    color: #ffffff;
+                    }
+
+                    tbody {
+                    color: #000000;
+                    }
+
+                   "
+    )),
     tabsetPanel(type="tabs",
                 tabPanel("Plot", plotly::plotlyOutput("plot")),
                 tabPanel("Summary", verbatimTextOutput("summary")),
-                tabPanel("Table", tableOutput("table"))
+                tabPanel("Table", DT::dataTableOutput(outputId="table"))
                 )
     )
   )
 )
 
-
 # Define server logic
 server <- function(input, output) {
-  
+
   # Reactive Plot Title
   title <- reactive({
     paste(input$datatype, "Forecast for", input$location, sep = " ")
@@ -209,6 +243,23 @@ server <- function(input, output) {
   }
   
   output$plot <- plotly::renderPlotly(final_plot())
+  
+  output$summary <- renderPrint({
+    summary(r_data3())
+  })
+  
+  output$table <- DT::renderDataTable({
+    r_data()
+  })
+  
+  output$download_data <- downloadHandler(
+    filename = "download_data.csv",
+    content = function(file) {
+      data <- r_data()
+      write.csv(data, file, row.names = FALSE)
+    }
+  )
+  
   
 }
 
