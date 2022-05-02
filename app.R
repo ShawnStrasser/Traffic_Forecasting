@@ -88,6 +88,7 @@ ui <-
         ),
     
   mainPanel(
+    h3("Background"),
     p("This app forecasts traffic volumes and travel times at traffic signals 
        using historical volume and travel time data. The forecasted 
        volumes and travel times can be used by traffic engineers to 
@@ -95,6 +96,12 @@ ui <-
        the future. The relationship between vehicle volumes and travel
        times can also reveal when a traffic signal system is likely to
        suffer from congestion."),
+    hr(),
+    h3("Data Definitions"),
+    p("Travel Time - travel time from one data collection point to the next heading
+    into an intersection. The distance over which the travel time occurs varies between locations
+    but is usually between a quarter and half mile long."),
+    p("Traffic Volume - total number of vehicles driving through an intersection during a given time period"),
     tabsetPanel(type="tabs",
                 tabPanel("Plot", plotly::plotlyOutput("plot")),
                 tabPanel("Summary", verbatimTextOutput("summary")),
@@ -103,15 +110,39 @@ ui <-
     )
   )),
   tabPanel("About Us",
-           p("A traffic engineer and data enthusiast, I look for actionable 
-             insights to alleviate traffic congestion and enhance safety for all
-             road users. I develop and maintain automated reporting solutions for
-             traffic signals at the Oregon Department of Transportation. This
-             includes everything from equipment failures, to pedestrian activity,
-             and even monitoring red-light running. Being data-driven means 
-             proactive maintenance and effective prioritization of projects.")
+           fluidPage(
+             column(12,
+                    p("This app was built for the DSCI-D590 Time Series Analysis class as
+             part of the M.S. in Data Science program at Indiana University -
+             Bloomington."),
+                    hr(),
+                    fluidRow(
+                      column(6,
+                             h3("Shawn Strasser"),img(src="shawn.png",height=150,
+                             width=150),p("A traffic engineer and data enthusiast,
+                             I look for actionable insights to alleviate traffic
+                             congestion and enhance safety for all road users. I
+                             develop and maintain automated reporting solutions 
+                             for traffic signals at the Oregon Department of 
+                             Transportation. This includes everything from 
+                             equipment failures, to pedestrian activity, and even
+                             monitoring red-light running. Being data-driven
+                             means proactive maintenance and effective prioritization
+                             of projects.")),
+                      column(width=6,
+                             h3("Sreeti Ravi"), img(src="sreeti.png",height=150,
+                             width=150),p("I am currently working as a Senior 
+                             Technology Solutions Consultant with a focus on data
+                             engineering and data science in Chicago for a global
+                             boutique consulting firm. I am driven by my interest
+                             in big data to solve real world problems using the tools
+                             I have gathered from my experiences and enjoy helping
+                             companies find actionable insights from their data.
+                             I obtained my B.S. in Informatics from IU in
+                             May 2020 and will receive my M.S. in Data Science in May 2022."))
+                    ))
            )
-
+           ),
 )
 
 # Define server logic
