@@ -52,7 +52,7 @@ ui <-
           selectInput(
             "level",
             "Select Aggregation Level",
-            c("15 minute", "60 minute", "day", "week")),
+            c("15 minute", "60 minute", "day")),
           br(),
           
           selectInput(
@@ -65,7 +65,7 @@ ui <-
           
           dateRangeInput(
             "daterange",
-            "Date Range (data avaiable from Jan 2020 through March 2022)",
+            "Date Range (data available from Jan 2021 through March 2022)",
             start = "2022-01-01",
             end = "2022-04-01"
           ),
@@ -80,7 +80,7 @@ ui <-
           
           br(),
           
-          sliderInput("steps", "Number of Weeks to Forecast", 1, 52, 2, step = 1),
+          sliderInput("steps", "Number of Weeks to Forecast", 1, 8, 2, step = 1),
           
           br(),
           
@@ -103,7 +103,8 @@ ui <-
     but is usually between a quarter and half mile long."),
     p("Traffic Volume - total number of vehicles driving through an intersection during a given time period"),
     tabsetPanel(type="tabs",
-                tabPanel("Plot", plotly::plotlyOutput("plot")),
+                tabPanel("Plot", plotly::plotlyOutput("plot"),
+                         plotly::plotlyOutput("scatter_plot")),
                 tabPanel("Summary", verbatimTextOutput("summary")),
                 tabPanel("Table", DT::dataTableOutput(outputId="table"))
                 )
@@ -199,10 +200,10 @@ server <- function(input, output) {
         TimeStamp >= input$daterange[1],
         TimeStamp <= input$daterange[2]
       ) %>%
-      select(input$datatype) %>%
+      #select(input$datatype) %>%
       select(-"Location Description") %>%
       group_by_key() %>%
-      mutate(TimeStamp_level = floor_date(TimeStamp, unit = input$level))
+      mutate(TimeStamp_Bin = floor_date(TimeStamp, unit = input$level))
   })
   
   # If the aggregation level is less than 1 day, keep TimeStamp as datetime
@@ -210,33 +211,40 @@ server <- function(input, output) {
   r_data2 <- reactive({
     if (substr(input$level, nchar(input$level) - 5, nchar(input$level)) == "minute")
     {
-      r_data() %>% index_by(TimeStamp_level)
+      r_data() %>% index_by(TimeStamp_Bin)
     }
     else
     {
-      r_data() %>% index_by(TimeStamp_level = as.Date(TimeStamp_level))
+      r_data() %>% index_by(TimeStamp_Bin = as.Date(TimeStamp_Bin))
     }
   })
   
   # Summarize with Sum for Volume, but use Mean for Travel Time
   r_data3 <- reactive({
-    if (input$datatype == "Volume")
-    {
-      r_data2() %>% summarise(`value` = sum(.data[[input$datatype]]))
-    }
-    else
-    {
-      r_data2() %>% summarise(`value` = mean(.data[[input$datatype]]))
-    }
+    r_data2() %>% summarise(`Volume` = sum(.data[["Volume"]]), `Travel_Time` = mean(.data[["Travel_Time"]]))
+    
+    #if (input$datatype == "Volume")
+    #{
+    #  r_data2() %>% summarise(`value` = sum(.data[[input$datatype]]))
+    #}
+    #else
+    #{
+    #  r_data2() %>% summarise(`value` = mean(.data[[input$datatype]]))
+    #}
   })
   
+  r_data4 <- reactive({
+    r_data3() %>% select(input$datatype, Type) %>%
+      rename("value" = .data[[input$datatype]])
+  })
   
   # Create a Plot
   final_plot <- function() {
-    r_data3() %>% 
+    r_data4() %>% 
+      #select(input$datatype) %>%
       model(decomposition_model(
       STL(
-        `value` ~ season(period = "week") + season(period = r_period()),
+         ~ season(period = "week") + season(period = r_period()),
         robust = TRUE
       ),
       NAIVE(season_adjust)
@@ -246,14 +254,26 @@ server <- function(input, output) {
       select(-.model) %>%
       select(.mean) %>%
       rename("value" = .mean) %>%
-      mutate(Type = "Forecast") %>%
-      bind_rows(r_data3()) %>%
-      autoplot(value) +
+      mutate(Type = "Forecast") %>% 
+      bind_rows(r_data4()) %>%
+      autoplot() +
       scale_color_manual(values = c("light blue", "pink", "blue", "red")) +
       labs(title = title(), y = y_axis())
   }
   
+  # Create a scatter Plot
+  scatter_plot <- function() {
+    r_data3() %>%
+      mutate(Bearing = paste(Bearing, "Actual", sep ="/")) %>%
+      ggplot(aes( x = Volume, y = Travel_Time, group = Bearing, color = Bearing)) +
+      geom_point() +
+      scale_color_manual(values = c("light blue", "pink")) +
+      labs(title = "Volume vs Travel Time", y = "Travel Time")
+  }
+  
   output$plot <- plotly::renderPlotly(final_plot())
+  
+  output$scatter_plot <- plotly::renderPlotly(scatter_plot())
   
   output$summary <- renderPrint({
     summary(r_data3())
