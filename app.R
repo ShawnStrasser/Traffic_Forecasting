@@ -7,6 +7,7 @@ library(fpp3)
 library(imputeTS)
 library(arrow)
 library(DT)
+library(markdown)
 # Note: run below to make arrow work in Shiny Server
 #Sys.setenv(LIBARROW_MINIMAL="false")
 #install.packages("arrow")
@@ -39,55 +40,53 @@ dataset <-
   na_seasplit(algorithm = "locf", find_frequency = TRUE)
 
 # Define UI for application
-ui <- fluidPage( 
-  theme = shinythemes::shinytheme('superhero'),
-  
-  titlePanel("Traffic Forecasting"),
-  
-  sidebarLayout(
+ui <- 
+  navbarPage("Traffic Forecasting",
+  theme = shinythemes::shinytheme('flatly'),
+    tabPanel("Plot",
+             
+      sidebarLayout(
+        
+        sidebarPanel(
+          
+          selectInput(
+            "level",
+            "Select Aggregation Level",
+            c("15 minute", "60 minute", "day", "week")),
+          br(),
+          
+          selectInput(
+            "location",
+            "Select Traffic Signal Location",
+            unique(dataset$"Location Description")
+          ),
+          
+          br(),
+          
+          dateRangeInput(
+            "daterange",
+            "Date Range (data avaiable from Jan 2020 through March 2022)",
+            start = "2022-01-01",
+            end = "2022-04-01"
+          ),
+          
+          br(),
+          
+          selectInput(
+            "datatype",
+            "Choose Traffic Volumes or Travel Times",
+            c("Volume", "Travel_Time")
+          ),
+          
+          br(),
+          
+          sliderInput("steps", "Number of Weeks to Forecast", 1, 52, 2, step = 1),
+          
+          br(),
+          
+          downloadButton(outputId = "download_data", label="Download")
+        ),
     
-    sidebarPanel(
-      
-      selectInput(
-        "level",
-        "Select Aggregation Level",
-        c("15 minute", "60 minute", "day", "week")),
-      
-      br(),
-      
-      selectInput(
-        "location",
-        "Select Traffic Signal Location",
-        unique(dataset$"Location Description")
-      ),
-      
-      br(),
-      
-      dateRangeInput(
-        "daterange",
-        "Date Range (data avaiable from Jan 2020 through March 2022)",
-        start = "2022-01-01",
-        end = "2022-04-01"
-      ),
-      
-      br(),
-      
-      selectInput(
-        "datatype",
-        "Choose Traffic Volumes or Travel Times",
-        c("Volume", "Travel_Time")
-      ),
-      
-      br(),
-      
-      sliderInput("steps", "Number of Weeks to Forecast", 1, 52, 2, step = 1),
-      
-      br(),
-      
-      downloadButton(
-        outputId = "download_data", label="Download")
-    ), 
-  
   mainPanel(
     p("This app forecasts traffic volumes and travel times at traffic signals 
        using historical volume and travel time data. The forecasted 
@@ -96,42 +95,23 @@ ui <- fluidPage(
        the future. The relationship between vehicle volumes and travel
        times can also reveal when a traffic signal system is likely to
        suffer from congestion."),
-    tags$style(HTML("
-                    .dataTables_wrapper .dataTables_length, .dataTables_wrapper .dataTables_filter, .dataTables_wrapper .dataTables_info, .dataTables_wrapper .dataTables_processing, .dataTables_wrapper .dataTables_paginate, .dataTables_wrapper .dataTables_paginate .paginate_button.current:hover {
-                    color: #ffffff;
-                    }
-      ### ADD THIS HERE ###
-                    .dataTables_wrapper .dataTables_paginate .paginate_button{box-sizing:border-box;display:inline-block;min-width:1.5em;padding:0.5em 1em;margin-left:2px;text-align:center;text-decoration:none !important;cursor:pointer;*cursor:hand;color:#ffffff !important;border:1px solid transparent;border-radius:2px}
-
-      ###To change text and background color of the `Select` box ###
-                    div.dataTables_length select {
-                           color: green !important;
-                           background-color: blue !important
-                           }
-
-      ###To change text and background color of the `Search` box ###
-                    .dataTables_filter input {
-                            color: #ffffff;
-                            background-color: #ffffff
-                           }
-
-                    thead {
-                    color: #ffffff;
-                    }
-
-                    tbody {
-                    color: #000000;
-                    }
-
-                   "
-    )),
     tabsetPanel(type="tabs",
                 tabPanel("Plot", plotly::plotlyOutput("plot")),
                 tabPanel("Summary", verbatimTextOutput("summary")),
                 tabPanel("Table", DT::dataTableOutput(outputId="table"))
                 )
     )
-  )
+  )),
+  tabPanel("About Us",
+           p("A traffic engineer and data enthusiast, I look for actionable 
+             insights to alleviate traffic congestion and enhance safety for all
+             road users. I develop and maintain automated reporting solutions for
+             traffic signals at the Oregon Department of Transportation. This
+             includes everything from equipment failures, to pedestrian activity,
+             and even monitoring red-light running. Being data-driven means 
+             proactive maintenance and effective prioritization of projects.")
+           )
+
 )
 
 # Define server logic
@@ -249,13 +229,13 @@ server <- function(input, output) {
   })
   
   output$table <- DT::renderDataTable({
-    r_data()
+    r_data3()
   })
   
   output$download_data <- downloadHandler(
     filename = "download_data.csv",
     content = function(file) {
-      data <- r_data()
+      data <- r_data3()
       write.csv(data, file, row.names = FALSE)
     }
   )
